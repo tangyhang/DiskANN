@@ -14,6 +14,9 @@
 #include "percentile_stats.h"
 #include "program_options_utils.hpp"
 
+#include <cuda_runtime.h>
+#include <cublas_v2.h>
+
 #ifndef _WINDOWS
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -66,6 +69,12 @@ int search_disk_index(diskann::Metric &metric, const std::string &index_path_pre
         diskann::cout << ", io_limit: " << search_io_limit << "." << std::endl;
 
     std::string warmup_query_file = index_path_prefix + "_sample_data.bin";
+
+    float* d_query;
+    float* h_query;
+    cudaMalloc(&d_query, 5 * sizeof(float));
+    cudaMemcpy(d_query, h_query, 5 * sizeof(float), cudaMemcpyHostToDevice);
+
 
     // load query bin
     T *query = nullptr;
