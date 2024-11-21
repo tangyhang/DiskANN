@@ -331,15 +331,15 @@ void pq_dist_lookup(const uint8_t *pq_ids, const size_t n_pts, const size_t pq_n
     memset(dists_out, 0, n_pts * sizeof(float));
     for (size_t chunk = 0; chunk < pq_nchunks; chunk++)
     {
-        const float *chunk_dists = pq_dists + 256 * chunk;
+        const float *chunk_dists = pq_dists + 256 * chunk; //先把每个chunk对应的距离表找到
         if (chunk < pq_nchunks - 1)
         {
-            _mm_prefetch((char *)(chunk_dists + 256), _MM_HINT_T0);
+            _mm_prefetch((char *)(chunk_dists + 256), _MM_HINT_T0);//预取一小段距离表到寄存器
         }
         for (size_t idx = 0; idx < n_pts; idx++)
         {
-            uint8_t pq_centerid = pq_ids[pq_nchunks * idx + chunk];
-            dists_out[idx] += chunk_dists[pq_centerid];
+            uint8_t pq_centerid = pq_ids[pq_nchunks * idx + chunk];//找到每个向量再距离表中对应的位置
+            dists_out[idx] += chunk_dists[pq_centerid];//给每个向量加上查表得到的距离值
         }
     }
 }

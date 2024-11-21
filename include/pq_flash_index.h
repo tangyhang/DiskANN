@@ -15,6 +15,7 @@
 #include "scratch.h"
 #include "tsl/robin_map.h"
 #include "tsl/robin_set.h"
+#include "gpu_kernels.h"
 
 #define FULL_PRECISION_REORDER_MULTIPLIER 3
 
@@ -183,6 +184,9 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
     uint8_t *data = nullptr;
     uint64_t _n_chunks;
     FixedChunkPQTable _pq_table;
+
+    float* d_pq_dists = nullptr;  // GPU上的PQ距离表
+    uint8_t* d_pq_data = nullptr; // GPU pointer for PQ data
 
     // distance comparator
     std::shared_ptr<Distance<T>> _dist_cmp;

@@ -14,9 +14,6 @@
 #include "percentile_stats.h"
 #include "program_options_utils.hpp"
 
-#include <cuda_runtime.h>
-#include <cublas_v2.h>
-
 #ifndef _WINDOWS
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -69,12 +66,6 @@ int search_disk_index(diskann::Metric &metric, const std::string &index_path_pre
         diskann::cout << ", io_limit: " << search_io_limit << "." << std::endl;
 
     std::string warmup_query_file = index_path_prefix + "_sample_data.bin";
-
-    float* d_query;
-    float* h_query;
-    cudaMalloc(&d_query, 5 * sizeof(float));
-    cudaMemcpy(d_query, h_query, 5 * sizeof(float), cudaMemcpyHostToDevice);
-
 
     // load query bin
     T *query = nullptr;
@@ -200,11 +191,13 @@ int search_disk_index(diskann::Metric &metric, const std::string &index_path_pre
                   << std::endl;
 
     std::vector<std::vector<uint32_t>> query_result_ids(Lvec.size());
+
     std::vector<std::vector<float>> query_result_dists(Lvec.size());
 
     uint32_t optimized_beamwidth = 2;
 
     double best_recall = 0.0;
+
 
     for (uint32_t test_id = 0; test_id < Lvec.size(); test_id++)
     {
@@ -260,6 +253,26 @@ int search_disk_index(diskann::Metric &metric, const std::string &index_path_pre
                     use_reorder_data, stats + i);
             }
         }
+
+        const int num_queries_to_output = 5; // 要输出前 5 个查询的结果
+        const int top_k = 10;                // 每个查询输出 top-10 最近邻
+
+        // 执行查询
+        for (int i = 0; i < num_queries_to_output; i++) {
+            // 输出查询结果
+            std::cout << "Query " << i + 1 << " results:\n";
+            for (int j = 0; j < top_k; j++) {
+                // 获取最近邻 ID 和距离
+                uint64_t neighbor_id = query_result_ids_64[i * recall_at + j];
+                float neighbor_dist = query_result_dists[test_id][i * recall_at + j];
+
+                // 打印结果
+                std::cout << "  Neighbor " << j + 1 << ": ID = " << neighbor_id
+                        << ", Distance = " << neighbor_dist << '\n';
+            }
+            std::cout << "----------------------------------\n";
+        }
+        
         auto e = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double> diff = e - s;
         double qps = (1.0 * query_num) / (1.0 * diff.count());

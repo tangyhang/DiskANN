@@ -19,26 +19,6 @@
 cmake_minimum_required(VERSION 3.15)
 project(diskann)
 
-# Enable CUDA support
-find_package(CUDA REQUIRED)
-
-# Include CUDA headers and libraries
-include_directories(${CUDA_INCLUDE_DIRS})
-link_directories(${CUDA_LIBRARY_DIRS})
-
-# Enable GPU support for the project
-option(ENABLE_GPU "Enable GPU acceleration" ON)
-
-if (ENABLE_GPU)
-    add_definitions(-DUSE_GPU)
-    message(STATUS "GPU acceleration is enabled.")
-    set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} -O3 -arch=sm_70") # Adjust arch based on your GPU
-    list(APPEND EXTRA_LIBS ${CUDA_LIBRARIES} ${CUDA_CUDART_LIBRARY})
-else()
-    message(STATUS "GPU acceleration is disabled.")
-endif()
-
-
 set(CMAKE_STANDARD 17)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

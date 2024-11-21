@@ -9,6 +9,9 @@
 #include "pq_flash_index.h"
 #include "cosine_similarity.h"
 
+#include <cuda_runtime.h>
+#include <cublas_v2.h>
+
 #ifdef _WINDOWS
 #include "windows_aligned_file_reader.h"
 #else
@@ -825,6 +828,19 @@ int PQFlashIndex<T, LabelT>::load_from_separate_paths(uint32_t num_threads, cons
     diskann::load_bin<uint8_t>(pq_compressed_vectors, this->data, npts_u64, nchunks_u64);
 #endif
 
+    // Print debug info
+    std::cout << "Loaded PQ data of size: " << npts_u64 << " points, "
+              << "dimension: " << pq_file_dim << std::endl;
+
+    // Allocate GPU memory for PQ data
+    size_t data_size = npts_u64 * nchunks_u64 * sizeof(uint8_t);
+    cudaMalloc((void**)&d_pq_data, data_size);
+
+    // Copy PQ data from host to GPU
+    cudaMemcpy(d_pq_data, this->data, data_size, cudaMemcpyHostToDevice);
+
+    std::cout << "Transferred PQ data to GPU. Size: " << data_size << " bytes." << std::endl;
+
     this->_num_points = npts_u64;
     this->_n_chunks = nchunks_u64;
 #ifdef EXEC_ENV_OLS
@@ -1293,6 +1309,8 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
     float *query_float = pq_query_scratch->aligned_query_float;
     float *query_rotated = pq_query_scratch->rotated_query;
 
+
+
     // normalization step. for cosine, we simply normalize the query
     // for mips, we normalize the first d-1 dims, and add a 0 for last dim, since an extra coordinate was used to
     // convert MIPS to L2 search
@@ -1340,6 +1358,14 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
     float *pq_dists = pq_query_scratch->aligned_pqtable_dist_scratch;
     _pq_table.populate_chunk_distances(query_rotated, pq_dists);
 
+
+
+    // 将PQ距离表传输到GPU
+    cudaMalloc((void**)&d_pq_dists, this->_n_chunks * sizeof(float));
+    cudaMemcpy(d_pq_dists, pq_dists, this->_n_chunks * sizeof(float), cudaMemcpyHostToDevice);
+
+
+
     // query <-> neighbor list
     float *dist_scratch = pq_query_scratch->aligned_dist_scratch;
     uint8_t *pq_coord_scratch = pq_query_scratch->aligned_pq_coord_scratch;
@@ -1350,6 +1376,32 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
         diskann::aggregate_coords(ids, n_ids, this->data, this->_n_chunks, pq_coord_scratch);
         diskann::pq_dist_lookup(pq_coord_scratch, n_ids, this->_n_chunks, pq_dists, dists_out);
     };
+
+    auto compute_dists_GPU = [this](const uint32_t* ids, const uint64_t n_ids, float* dists_out) {
+
+        // 将邻居ID传输到GPU
+        uint32_t* d_ids = nullptr;
+        size_t ids_size = n_ids * sizeof(uint32_t);
+        cudaMalloc((void**)&d_ids, ids_size);
+        cudaMemcpy(d_ids, ids, ids_size, cudaMemcpyHostToDevice);
+
+        // 定义 GPU 上的距离链表
+        float* d_dists_out = nullptr;
+        cudaMalloc((void**)&d_dists_out, n_ids * sizeof(float));
+
+        // 调用CUDA内核计算距离
+        call_compute_pq_distances(d_pq_data, d_pq_dists, d_ids, n_ids, this->_n_chunks, d_dists_out);
+
+        // 将结果从 GPU 传回 CPU
+        cudaMemcpy(dists_out, d_dists_out, n_ids * sizeof(float), cudaMemcpyDeviceToHost);
+
+
+
+        // 释放GPU内存
+        cudaFree(d_ids);
+        cudaFree(d_dists_out);
+    };
+
     Timer query_timer, io_timer, cpu_timer;
 
     tsl::robin_set<uint64_t> &visited = query_scratch->visited;
@@ -1416,6 +1468,7 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
 
     while (retset.has_unexpanded_node() && num_ios < io_limit)
     {
+
         // clear iteration state
         frontier.clear();
         frontier_nhoods.clear();
@@ -1507,6 +1560,7 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
 
             // compute node_nbrs <-> query dists in PQ space
             cpu_timer.reset();
+
             compute_dists(node_nbrs, nnbrs, dist_scratch);
             if (stats != nullptr)
             {
@@ -1569,7 +1623,8 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
             uint32_t *node_nbrs = (node_buf + 1);
             // compute node_nbrs <-> query dist in PQ space
             cpu_timer.reset();
-            compute_dists(node_nbrs, nnbrs, dist_scratch);
+            // compute_dists(node_nbrs, nnbrs, dist_scratch);
+            compute_dists_GPU(node_nbrs, nnbrs, dist_scratch);
             if (stats != nullptr)
             {
                 stats->n_cmps += (uint32_t)nnbrs;
@@ -1612,6 +1667,7 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
 
     // re-sort by distance
     std::sort(full_retset.begin(), full_retset.end());
+    cudaFree(d_pq_dists);
 
     if (use_reorder_data)
     {
